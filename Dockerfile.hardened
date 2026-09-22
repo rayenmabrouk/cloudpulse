@@ -1,0 +1,77 @@
+# ============================================================
+# CloudPulse — Hardened multi-stage Dockerfile
+# Original application: dpaste (MIT License, DarrenOfficial)
+# Infrastructure/containerization: Rayen Mabrouk
+# ============================================================
+
+# Stage 1: Build static files (CSS/JS) with Node
+FROM node:lts-slim AS staticfiles
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends make && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json Makefile ./
+RUN npm ci --ignore-scripts
+COPY client ./client
+RUN mkdir -p dpaste/static && make css && make js
+
+# Stage 2: Build Python application
+FROM python:3.10-slim AS build
+
+WORKDIR /app
+
+# Install build dependencies needed for compiling Python packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir -U pip
+
+# Copy static files from Stage 1
+COPY --from=staticfiles /app /app/
+
+# Install Python dependencies
+COPY setup.py setup.cfg ./
+COPY dpaste/__init__.py dpaste/
+RUN pip install --no-cache-dir -e .[production]
+
+# Copy application code
+COPY . .
+
+# Collect static files
+RUN python manage.py collectstatic --noinput
+
+# Stage 3: Production runtime
+FROM python:3.10-slim AS runtime
+
+# Install runtime dependencies and curl for health check
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libpq5 curl libexpat1 libxml2 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r dpaste && useradd -r -g dpaste -d /app -s /sbin/nologin dpaste
+
+WORKDIR /app
+
+# Copy the entire app with installed packages from build stage
+COPY --from=build /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=build /usr/local/bin /usr/local/bin
+COPY --from=build /app /app
+
+# Create directory for SQLite database and set permissions
+RUN mkdir -p /data && chown -R dpaste:dpaste /app /data
+
+ENV PORT=8000
+ENV DATABASE_URL=sqlite:////data/dpaste.sqlite
+
+# Switch to non-root user
+USER dpaste
+
+EXPOSE ${PORT}
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/ || exit 1
+
+# Use exec form for proper signal handling
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py pyuwsgi --http=:${PORT} --logger file:/dev/null"]
