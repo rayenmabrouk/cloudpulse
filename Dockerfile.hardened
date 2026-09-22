@@ -40,12 +40,15 @@ COPY . .
 # Collect static files
 RUN python manage.py collectstatic --noinput
 
+# Clean up build artifacts not needed at runtime
+RUN rm -rf node_modules
+
 # Stage 3: Production runtime
 FROM python:3.10-slim AS runtime
 
 # Install runtime dependencies and curl for health check
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libpq5 curl libexpat1 libxml2 && \
+    apt-get install -y --no-install-recommends libpq5 curl libexpat1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
