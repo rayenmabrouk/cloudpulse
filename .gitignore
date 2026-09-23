@@ -7,3 +7,5 @@ dpaste.egg-info
 dpaste.sqlite
 node_modules
 **/__pycache__/
+# Generated monitoring target (changes with the EC2 IP)
+monitoring/prometheus/targets.d/*.yml
