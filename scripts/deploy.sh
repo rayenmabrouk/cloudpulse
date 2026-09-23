@@ -38,8 +38,19 @@ IMAGE="${REGISTRY}/${REPO}:${IMAGE_TAG}"
 log "Deploying ${IMAGE} for https://${APP_HOST}"
 
 # --- Pull image (instance role provides ECR read access; no stored credentials) ---
-aws ecr get-login-password --region "${REGION}" \
-  | docker login --username AWS --password-stdin "${REGISTRY}" >/dev/null 2>&1
+# Preferred: Amazon ECR credential helper - fetches short-lived registry credentials
+# from the instance role on demand, so no token is written to /root/.docker/config.json.
+# Fallback: classic docker login if the helper package is unavailable.
+if command -v docker-credential-ecr-login >/dev/null 2>&1 \
+   || dnf install -y -q amazon-ecr-credential-helper >/dev/null 2>&1; then
+  mkdir -p /root/.docker
+  echo "{\"credHelpers\":{\"${REGISTRY}\":\"ecr-login\"}}" > /root/.docker/config.json
+  log "ECR auth: credential helper (no stored token)"
+else
+  aws ecr get-login-password --region "${REGION}" \
+    | docker login --username AWS --password-stdin "${REGISTRY}" >/dev/null 2>&1
+  log "ECR auth: docker login fallback"
+fi
 docker pull -q "${IMAGE}" >/dev/null
 
 # --- Runtime config: SECRET_KEY from SSM SecureString into a root-only env file ---
@@ -120,11 +131,42 @@ EOF
   fi
 }
 
+# Daily purge of expired snippets (dpaste's cleanup_snippets command).
+# systemd timer because Amazon Linux 2023 ships without cron.
+ensure_cleanup_timer() {
+  cat > /etc/systemd/system/cloudpulse-cleanup.service <<EOF
+[Unit]
+Description=CloudPulse - purge expired dpaste snippets
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec ${CONTAINER} python manage.py cleanup_snippets
+EOF
+  cat > /etc/systemd/system/cloudpulse-cleanup.timer <<EOF
+[Unit]
+Description=Run CloudPulse snippet cleanup daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now cloudpulse-cleanup.timer >/dev/null 2>&1
+  log "Cleanup timer active"
+}
+
 start_container "${IMAGE}"
 if healthy; then
   log "Healthy: ${IMAGE}"
   echo "${IMAGE}" > "${STATE_DIR}/current_image"
   ensure_proxy
+  ensure_cleanup_timer
   docker image prune -f >/dev/null
   log "Live at https://${APP_HOST}"
   exit 0
