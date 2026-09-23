@@ -1,5 +1,5 @@
 # ============================================================
-# CloudPulse — Root Variables
+# CloudPulse - Root Variables
 # ============================================================
 
 variable "aws_region" {

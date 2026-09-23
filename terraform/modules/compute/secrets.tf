@@ -7,6 +7,7 @@ resource "random_password" "django_secret_key" {
 }
 
 resource "aws_ssm_parameter" "django_secret_key" {
+  # checkov:skip=CKV_AWS_337:encrypted with the AWS managed aws/ssm KMS key; a customer-managed key is not required in a single-account lab
   name        = "/${var.project_name}/django/secret_key"
   description = "Django SECRET_KEY for dpaste (read by EC2 at deploy time)"
   type        = "SecureString"

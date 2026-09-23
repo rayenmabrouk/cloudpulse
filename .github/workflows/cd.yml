@@ -85,8 +85,15 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
 
+      # ECR tags are immutable: a re-run for the same commit must not fail on push
       - name: Push image to ECR
-        run: docker push "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}"
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists in ECR (immutable) - skipping push"
+          else
+            docker push "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:$TAG"
+          fi
 
   deploy:
     name: Deploy to EC2 via SSM

@@ -1,11 +1,12 @@
 # ============================================================
-# CloudPulse — Networking Module
+# CloudPulse - Networking Module
 # Creates: VPC, public subnet, internet gateway, route table,
 #          security group
 # ============================================================
 
 # --- VPC ---
 resource "aws_vpc" "main" {
+  # checkov:skip=CKV2_AWS_11:VPC flow logs need a delivery IAM role, which cannot be created in AWS Academy; documented as a production requirement
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
@@ -17,10 +18,12 @@ resource "aws_vpc" "main" {
 
 # --- Public Subnet ---
 data "aws_availability_zones" "available" {
+  # checkov:skip=CKV_AWS_394:single-AZ deployment that only uses names[0]
   state = "available"
 }
 
 resource "aws_subnet" "public" {
+  # checkov:skip=CKV_AWS_130:public subnet by design (no NAT gateway, for cost); production would use a private subnet behind a load balancer
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_cidr
   map_public_ip_on_launch = true
@@ -61,11 +64,14 @@ resource "aws_route_table_association" "public" {
 
 # --- Security Group ---
 resource "aws_security_group" "app" {
+  # checkov:skip=CKV_AWS_260:port 80 is required for the HTTP to HTTPS redirect and Let's Encrypt HTTP-01 validation
+  # checkov:skip=CKV_AWS_382:outbound access needed for ECR, SSM, Let's Encrypt and OS packages; production would use VPC endpoints and restricted egress
+  # checkov:skip=CKV2_AWS_5:false positive - attached to the EC2 instance in the compute module
   name        = "${var.project_name}-app-sg"
   description = "Security group for CloudPulse application"
   vpc_id      = aws_vpc.main.id
 
-  # SSH — restricted to your IP only
+  # SSH - restricted to your IP only
   ingress {
     description = "SSH from allowed IP"
     from_port   = 22
@@ -103,5 +109,14 @@ resource "aws_security_group" "app" {
 
   tags = {
     Name = "${var.project_name}-app-sg"
+  }
+}
+
+# --- Default security group: all rules removed (nothing should use it) ---
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.project_name}-default-sg-locked"
   }
 }
