@@ -1,0 +1,170 @@
+# ============================================================
+# CloudPulse - CD pipeline
+# Build -> Trivy gate -> push to ECR -> deploy to EC2 via SSM Run Command
+# -> HTTPS smoke test. Runs on merges to master that change the app,
+# the image or the deploy script; can also be started manually.
+# ============================================================
+name: CD
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "dpaste/**"
+      - "client/**"
+      - "Dockerfile.hardened"
+      - "setup.py"
+      - "setup.cfg"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/deploy.sh"
+      - ".github/workflows/cd.yml"
+  workflow_dispatch:
+
+# Never run two deployments at once; queue instead of cancelling one mid-way
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: cloudpulse
+  INSTANCE_NAME: cloudpulse-server
+
+jobs:
+  build-scan-push:
+    name: Build, scan, push
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image tag = short commit SHA
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # AWS Academy session credentials (OIDC is blocked in the Learner Lab).
+      # They expire with the lab session; refreshed by scripts/refresh-github-aws-secrets.ps1
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.hardened
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+
+      # Same policy as CI: fail on fixable CRITICAL/HIGH. Nothing is pushed if this fails.
+      - name: Trivy scan (release gate)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Push image to ECR
+        run: docker push "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}"
+
+  deploy:
+    name: Deploy to EC2 via SSM
+    needs: build-scan-push
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.app_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy via SSM Run Command
+        id: deploy
+        env:
+          IMAGE_TAG: ${{ needs.build-scan-push.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "::error::No running instance tagged ${INSTANCE_NAME}"; exit 1
+          fi
+          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          echo "Deploying tag ${IMAGE_TAG} to ${INSTANCE_ID} (${PUBLIC_IP})"
+
+          # Ship this commit's deploy.sh with the command, so the instance
+          # always runs the reviewed version from Git.
+          SCRIPT_B64=$(base64 -w0 scripts/deploy.sh)
+          jq -n --arg b64 "$SCRIPT_B64" --arg tag "$IMAGE_TAG" '{commands: [
+            "set -e",
+            "echo \($b64) | base64 -d > /opt/cloudpulse/deploy.sh",
+            "chmod 0755 /opt/cloudpulse/deploy.sh",
+            "/opt/cloudpulse/deploy.sh \($tag)"
+          ]}' > ssm-params.json
+
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "CloudPulse deploy ${IMAGE_TAG}" \
+            --parameters file://ssm-params.json \
+            --query Command.CommandId --output text)
+          echo "SSM command ID: ${CMD_ID}"
+
+          # Poll until the command finishes (max 5 minutes)
+          STATUS=Pending
+          for _ in $(seq 1 60); do
+            sleep 5
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Pending|InProgress|Delayed) continue ;; *) break ;; esac
+          done
+
+          echo "----- deploy.sh output -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text || true
+          echo "----- stderr -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardErrorContent --output text || true
+          echo "SSM status: ${STATUS}"
+          if [ "$STATUS" != "Success" ]; then
+            echo "::error::Deployment failed with status ${STATUS}"; exit 1
+          fi
+
+          echo "app_url=https://${PUBLIC_IP//./-}.sslip.io" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test over HTTPS
+        env:
+          APP_URL: ${{ steps.deploy.outputs.app_url }}
+        run: |
+          curl -sS --fail --retry 10 --retry-delay 5 --retry-all-errors \
+            -o /dev/null -w "GET / -> HTTP %{http_code} in %{time_total}s\n" "${APP_URL}/"
