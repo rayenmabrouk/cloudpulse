@@ -1,5 +1,5 @@
 # ============================================================
-# CloudPulse — Networking Module
+# CloudPulse â€” Networking Module
 # Creates: VPC, public subnet, internet gateway, route table,
 #          security group
 # ============================================================
@@ -65,7 +65,7 @@ resource "aws_security_group" "app" {
   description = "Security group for CloudPulse application"
   vpc_id      = aws_vpc.main.id
 
-  # SSH — restricted to your IP only
+  # SSH â€” restricted to your IP only
   ingress {
     description = "SSH from allowed IP"
     from_port   = 22
@@ -74,11 +74,20 @@ resource "aws_security_group" "app" {
     cidr_blocks = [var.allowed_ssh_cidr]
   }
 
-  # Application port — public access
+  # HTTP - Caddy redirects to HTTPS and answers Let's Encrypt HTTP-01 challenges
   ingress {
-    description = "Application HTTP access"
-    from_port   = var.app_port
-    to_port     = var.app_port
+    description = "HTTP redirect to HTTPS and ACME challenge"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTPS - public entry point; TLS terminated by Caddy on the instance
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }

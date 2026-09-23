@@ -12,3 +12,8 @@ output "log_group_name" {
   description = "CloudWatch log group for container logs"
   value       = module.monitoring.log_group_name
 }
+
+output "app_url" {
+  description = "Public HTTPS URL (sslip.io hostname derived from the instance IP)"
+  value       = "https://${replace(module.compute.instance_public_ip, ".", "-")}.sslip.io"
+}
