@@ -1,0 +1,111 @@
+{
+  "uid": "cloudpulse-overview",
+  "title": "CloudPulse - dpaste overview",
+  "tags": ["cloudpulse"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Production",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "probe_success{env=\"production\"}" }],
+      "fieldConfig": { "defaults": {
+        "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+      }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Local",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "probe_success{env=\"local\"}" }],
+      "fieldConfig": { "defaults": {
+        "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+      }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Production HTTP status",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "probe_http_status_code{env=\"production\"}" }],
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 200 }, { "color": "red", "value": 300 }] }
+      }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "TLS certificate expires in",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "(probe_ssl_earliest_cert_expiry{env=\"production\"} - time()) / 86400" }],
+      "fieldConfig": { "defaults": {
+        "unit": "d", "decimals": 1,
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 14 }, { "color": "green", "value": 30 }] }
+      }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 5, "type": "stat", "title": "Firing alerts",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)" }],
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+      }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Response time (full request)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "probe_duration_seconds", "legendFormat": "{{env}}" }],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Production request phases (DNS, connect, TLS, processing, transfer)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "probe_http_duration_seconds{env=\"production\"}", "legendFormat": "{{phase}}" }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 30 } }, "overrides": [] }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Production EC2 CPU (CloudWatch, 1-minute detailed monitoring)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "targets": [{
+        "refId": "A", "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+        "queryMode": "Metrics", "region": "default", "namespace": "AWS/EC2", "metricName": "CPUUtilization",
+        "dimensions": { "InstanceId": "*" }, "matchExact": false, "statistic": "Average", "period": "60",
+        "metricQueryType": 0, "metricEditorMode": 0, "id": "", "expression": ""
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Production EC2 network (CloudWatch)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+      "targets": [
+        {
+          "refId": "A", "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+          "queryMode": "Metrics", "region": "default", "namespace": "AWS/EC2", "metricName": "NetworkIn",
+          "dimensions": { "InstanceId": "*" }, "matchExact": false, "statistic": "Sum", "period": "60",
+          "metricQueryType": 0, "metricEditorMode": 0, "id": "", "expression": ""
+        },
+        {
+          "refId": "B", "datasource": { "type": "cloudwatch", "uid": "cloudwatch" },
+          "queryMode": "Metrics", "region": "default", "namespace": "AWS/EC2", "metricName": "NetworkOut",
+          "dimensions": { "InstanceId": "*" }, "matchExact": false, "statistic": "Sum", "period": "60",
+          "metricQueryType": 0, "metricEditorMode": 0, "id": "", "expression": ""
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] }
+    }
+  ]
+}

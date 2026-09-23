@@ -1,0 +1,71 @@
+# CloudPulse - local observability stack
+# Probes the local container AND the live AWS deployment (black-box monitoring:
+# no changes to the dpaste application code).
+# Usage (from monitoring/):
+#   powershell -ExecutionPolicy Bypass -File set-production-target.ps1
+#   docker compose up -d --build
+# Grafana: http://localhost:3000   Prometheus: http://localhost:9090
+name: cloudpulse-monitoring
+
+services:
+  dpaste:
+    build:
+      context: ..
+      dockerfile: Dockerfile.hardened
+    image: cloudpulse:local
+    container_name: cloudpulse-dpaste
+    environment:
+      SECRET_KEY: local-monitoring-demo-not-a-secret
+      DEBUG: "False"
+      ALLOWED_HOSTS: localhost,127.0.0.1,dpaste
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - dpaste_data:/data
+    restart: unless-stopped
+
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: cloudpulse-blackbox
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    restart: unless-stopped
+
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: cloudpulse-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: cloudpulse-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-cloudpulse-local}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+      # AWS Academy session credentials, read-only, for the CloudWatch datasource
+      - ${USERPROFILE}/.aws:/usr/share/grafana/.aws:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  dpaste_data:
+  prometheus_data:
+  grafana_data:

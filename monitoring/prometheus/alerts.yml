@@ -1,0 +1,29 @@
+groups:
+  - name: cloudpulse
+    rules:
+      - alert: DpasteDown
+        expr: probe_success == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "dpaste is down ({{ $labels.env }})"
+          description: "HTTP probe of {{ $labels.instance }} has been failing for more than 1 minute."
+
+      - alert: DpasteSlowResponse
+        expr: probe_duration_seconds > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dpaste is slow ({{ $labels.env }})"
+          description: "Probe of {{ $labels.instance }} takes more than 2s for 5 minutes."
+
+      - alert: TLSCertificateExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate expires in less than 14 days"
+          description: "Certificate for {{ $labels.instance }} expires soon; Caddy should have renewed it."
