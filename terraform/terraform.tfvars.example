@@ -1,0 +1,3 @@
+aws_region       = "us-east-1"
+project_name     = "cloudpulse"
+allowed_ssh_cidr = "YOUR_PUBLIC_IP/32"
