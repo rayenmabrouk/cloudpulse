@@ -1,9 +1,11 @@
 # ============================================================
-# CloudPulse — Monitoring Module
+# CloudPulse - Monitoring Module
 # Creates: CloudWatch log group, CPU alarm, status check alarm
 # ============================================================
 
 resource "aws_cloudwatch_log_group" "app" {
+  # checkov:skip=CKV_AWS_158:CloudWatch Logs encrypts log data at rest by default; a customer-managed key would add a key policy to maintain
+  # checkov:skip=CKV_AWS_338:7-day retention chosen deliberately to limit cost in a lab environment
   name              = "/cloudpulse/dpaste"
   retention_in_days = 7
 

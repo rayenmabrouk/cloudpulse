@@ -1,0 +1,161 @@
+# ============================================================
+# CloudPulse - Terraform pipeline
+# PR:    fmt -> validate -> Checkov IaC scan -> plan (shown in the run summary)
+# Merge: plan -> MANUAL APPROVAL (environment "infrastructure") -> apply the exact saved plan
+# ============================================================
+name: Terraform
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [master]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+# One Terraform run at a time (the S3 lock protects state; this avoids runs colliding on it)
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.16.2"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_REGION: us-east-1
+  TF_VAR_allowed_ssh_cidr: ${{ secrets.TF_VAR_ALLOWED_SSH_CIDR }}
+
+defaults:
+  run:
+    working-directory: terraform
+
+jobs:
+  static-checks:
+    name: fmt, validate, Checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform validate
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      # Fails on any finding that is neither fixed nor skipped with a justification in the code
+      - name: Checkov IaC security scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          quiet: true
+
+  plan:
+    name: Plan
+    needs: static-checks
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # AWS Academy session credentials (OIDC is blocked in the Learner Lab)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init (S3 backend)
+        run: terraform init
+
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -out=tfplan -no-color -lock-timeout=120s -detailed-exitcode > plan.txt 2>&1
+          code=$?
+          set -e
+          cat plan.txt
+          if [ "$code" -eq 1 ]; then exit 1; fi
+          if [ "$code" -eq 2 ]; then echo "has_changes=true" >> "$GITHUB_OUTPUT"; else echo "has_changes=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Plan summary
+        run: |
+          {
+            echo "## Terraform plan"
+            echo '```'
+            grep -E '^(Plan:|No changes)|^  # ' plan.txt || true
+            echo '```'
+            echo "<details><summary>Full plan</summary>"
+            echo
+            echo '```'
+            cat plan.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The apply job applies exactly this reviewed plan (short retention: plan files can contain sensitive values)
+      - name: Upload plan
+        if: github.event_name != 'pull_request' && steps.plan.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+          retention-days: 1
+
+  apply:
+    name: Apply (manual approval)
+    needs: plan
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master' && needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment: infrastructure
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init (S3 backend)
+        run: terraform init
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: terraform
+
+      - name: terraform apply (exact saved plan)
+        run: terraform apply -no-color -lock-timeout=120s tfplan

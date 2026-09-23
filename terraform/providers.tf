@@ -1,5 +1,5 @@
 # ============================================================
-# CloudPulse — Terraform Provider Configuration
+# CloudPulse - Terraform Provider Configuration
 # Infrastructure: Rayen Mabrouk
 # ============================================================
 
