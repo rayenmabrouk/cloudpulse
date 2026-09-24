@@ -1,0 +1,8 @@
+# Lint configuration for the inherited dpaste code (CI "lint" job, blocking).
+# Default rule set (pyflakes + pycodestyle errors). The dpaste sources are
+# upstream code, so style-only findings are ignored rather than rewriting them.
+extend-exclude = ["dpaste/migrations"]
+
+[lint]
+# E741 "ambiguous variable name" (single-letter names like `l`) in upstream views/highlighting
+ignore = ["E741"]

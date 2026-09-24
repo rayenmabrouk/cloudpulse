@@ -1,0 +1,9 @@
+# hadolint configuration (used by the docker-build-scan CI job)
+failure-threshold: warning
+ignored:
+  # Pinning apt package versions breaks the build as soon as Debian publishes a
+  # security update (old versions leave the mirror). Instead, images are rebuilt
+  # on every change and Trivy blocks any fixable CRITICAL/HIGH vulnerability.
+  - DL3008
+  # pip itself is upgraded in the throwaway build stage only.
+  - DL3013

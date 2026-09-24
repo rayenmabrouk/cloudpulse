@@ -1,4 +1,4 @@
-﻿# Python vulnerabilities vendored inside setuptools — cannot be
+# Python vulnerabilities vendored inside setuptools — cannot be
 # independently upgraded without forking the base image's Python.
 # These are build-tool internals, not application runtime code.
 # Tracked: will be resolved when python:3.10-slim updates setuptools.
