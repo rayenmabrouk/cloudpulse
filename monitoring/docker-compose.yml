@@ -32,7 +32,6 @@ services:
       - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     restart: unless-stopped
 
-
   prometheus:
     image: prom/prometheus:v3.2.1
     container_name: cloudpulse-prometheus
@@ -58,7 +57,8 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
       # AWS Academy session credentials, read-only, for the CloudWatch datasource
-      - ${USERPROFILE}/.aws:/usr/share/grafana/.aws:ro
+      # (HOME on Linux/macOS, USERPROFILE on Windows)
+      - ${HOME:-${USERPROFILE}}/.aws:/usr/share/grafana/.aws:ro
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

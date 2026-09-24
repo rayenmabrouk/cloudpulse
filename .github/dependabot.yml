@@ -1,11 +1,31 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-
+# Weekly dependency update PRs. Every PR runs the full CI (tests, lint, image
+# build + smoke test + Trivy) before it can be merged.
 version: 2
 updates:
-  - package-ecosystem: "pip" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # Keeps the SHA-pinned actions in .github/workflows current
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Base images in Dockerfile.hardened
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # AWS / random provider versions (terraform/.terraform.lock.hcl)
+  - package-ecosystem: terraform
+    directory: /terraform
+    schedule:
+      interval: weekly
+
+  # Python dependencies of the inherited dpaste application
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

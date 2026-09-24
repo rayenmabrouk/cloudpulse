@@ -1,6 +1,6 @@
 # ============================================================
 # CloudPulse - Terraform pipeline
-# PR:    fmt -> validate -> Checkov IaC scan -> plan (shown in the run summary)
+# PR:    fmt -> validate -> TFLint -> Checkov IaC scan -> plan (shown in the run summary)
 # Merge: plan -> MANUAL APPROVAL (environment "infrastructure") -> apply the exact saved plan
 # ============================================================
 name: Terraform
@@ -42,9 +42,9 @@ jobs:
     name: fmt, validate, Checkov
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
@@ -57,9 +57,19 @@ jobs:
           terraform init -backend=false
           terraform validate
 
+      # Catches what validate does not: unused variables/outputs, missing version
+      # constraints, deprecated syntax. Binary verified against its published SHA-256.
+      - name: TFLint
+        run: |
+          curl -sSfL -o /tmp/tflint.zip \
+            https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_linux_amd64.zip
+          echo "cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537  /tmp/tflint.zip" | sha256sum -c -
+          unzip -q /tmp/tflint.zip -d /tmp
+          /tmp/tflint --recursive --format compact
+
       # Fails on any finding that is neither fixed nor skipped with a justification in the code
       - name: Checkov IaC security scan
-        uses: bridgecrewio/checkov-action@v12
+        uses: bridgecrewio/checkov-action@444c9db6fa75e2d9c19ebf1fde7322089be9009e # v12.3125.0
         with:
           directory: terraform
           framework: terraform
@@ -72,16 +82,16 @@ jobs:
     outputs:
       has_changes: ${{ steps.plan.outputs.has_changes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
       # AWS Academy session credentials (OIDC is blocked in the Learner Lab)
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -120,7 +130,7 @@ jobs:
       # The apply job applies exactly this reviewed plan (short retention: plan files can contain sensitive values)
       - name: Upload plan
         if: github.event_name != 'pull_request' && steps.plan.outputs.has_changes == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tfplan
           path: terraform/tfplan
@@ -133,15 +143,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: infrastructure
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -152,7 +162,7 @@ jobs:
         run: terraform init
 
       - name: Download reviewed plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tfplan
           path: terraform
