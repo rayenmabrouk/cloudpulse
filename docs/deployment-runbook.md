@@ -82,7 +82,7 @@ The state bucket is created outside Terraform (Terraform cannot store its state 
 powershell -ExecutionPolicy Bypass -File scripts\bootstrap-tfstate.ps1
 ```
 
-It creates `cloudpulse-tfstate-<account-id>` with versioning, SSE-S3 encryption, all public access blocked and a TLS-only bucket policy.
+It creates `cloudpulse-tfstate-<account-id>` with versioning, SSE-S3 encryption, all public access blocked and a TLS-only bucket policy. It also creates the empty backup bucket `cloudpulse-backups-<account-id>`; Terraform configures it in the next step. (The Academy's service control policy denies `s3:GetBucketObjectLockConfiguration`, so the AWS provider cannot manage the bucket resource itself; see troubleshooting #17.)
 
 ### 2.2 Infrastructure [verified]
 
@@ -99,7 +99,7 @@ terraform output
 cd ..
 ```
 
-This creates the VPC, subnet, internet gateway, security groups, EC2 instance (Docker installed by `user_data`), ECR repository with lifecycle policy, SSM `SecureString` parameter with a generated Django `SECRET_KEY`, the SQLite backup bucket and its SSM parameter, CloudWatch log group, 5xx metric filter and alarms (and an SNS topic if `alarm_email` is set).
+This creates the VPC, subnet, internet gateway, security groups, EC2 instance (Docker installed by `user_data`), ECR repository with lifecycle policy, SSM `SecureString` parameter with a generated Django `SECRET_KEY`, the backup bucket's settings (versioning, encryption, lifecycle, TLS-only policy, public access block) and its SSM parameter, CloudWatch log group, 5xx metric filter and alarms (and an SNS topic if `alarm_email` is set).
 
 **[not yet verified]** The ECR lifecycle policy, backup bucket, 5xx metric filter/alarm, SNS topic and the optional SSH rule were added after the verified build. The first plan after pulling these changes should show only additions (ECR lifecycle policy, S3 bucket and its settings, SSM parameter, metric filter, alarm) and in-place tag updates, **no replacement**. Stop and investigate if it proposes to replace the instance.
 
@@ -291,4 +291,4 @@ terraform -chdir=terraform plan -destroy -out=destroy.tfplan
 terraform -chdir=terraform apply destroy.tfplan
 ```
 
-`force_delete = true` on the ECR repository removes its images, and `force_destroy = true` on the backup bucket removes the backups (download any you want to keep first). The state bucket is not managed by Terraform: empty all object **versions** and delete it manually afterwards, only once the state is no longer needed.
+`force_delete = true` on the ECR repository removes its images. The state and backup buckets are not created by Terraform: empty all object **versions** and delete them manually afterwards (download any backups you want to keep first; delete the state bucket only once the state is no longer needed).
