@@ -58,7 +58,7 @@ Academy credentials expire when the lab session ends (about 4 hours), and the EC
 
 5. If the AWS Console shows `explicit deny ... voc-cancel-cred`, the console tab is from an older session: close all console tabs and reopen the console from Vocareum.
 
-### After a lab restart: redeploy [not yet verified]
+### After a lab restart: redeploy [verified 2026-09-24]
 
 When the instance starts again it gets a **new public IP**, so the sslip.io hostname changes. The containers restart automatically, but Caddy's certificate and Django's `ALLOWED_HOSTS` still refer to the old hostname. Redeploy so `deploy.sh` regenerates both:
 
@@ -101,7 +101,7 @@ cd ..
 
 This creates the VPC, subnet, internet gateway, security groups, EC2 instance (Docker installed by `user_data`), ECR repository with lifecycle policy, SSM `SecureString` parameter with a generated Django `SECRET_KEY`, the backup bucket's settings (versioning, encryption, lifecycle, TLS-only policy, public access block) and its SSM parameter, CloudWatch log group, 5xx metric filter and alarms (and an SNS topic if `alarm_email` is set).
 
-**[not yet verified]** The ECR lifecycle policy, backup bucket, 5xx metric filter/alarm, SNS topic and the optional SSH rule were added after the verified build. The first plan after pulling these changes should show only additions (ECR lifecycle policy, S3 bucket and its settings, SSM parameter, metric filter, alarm) and in-place tag updates, **no replacement**. Stop and investigate if it proposes to replace the instance.
+**[verified 2026-09-24]** The ECR lifecycle policy, backup bucket settings and 5xx metric filter/alarm were applied through the pipeline with in-place tag updates and **no replacement**; the next plan reported no changes. Always stop and investigate if a plan proposes to replace the instance. The SNS topic (`alarm_email`) is **[not yet verified]**.
 
 After this first bootstrap, **infrastructure changes go through pull requests** and the Terraform pipeline (section 4.2).
 
@@ -232,7 +232,7 @@ aws ecr describe-images --repository-name cloudpulse --query "sort_by(imageDetai
 
 Runs daily via `cloudpulse-cleanup.timer`. Run it now: `systemctl start cloudpulse-cleanup.service` (through SSM), then `journalctl -u cloudpulse-cleanup.service -n 5`.
 
-### Backups and restore [not yet verified]
+### Backups and restore [backup verified 2026-09-24; restore and scheduled run not yet verified]
 
 `cloudpulse-backup.timer` runs `/opt/cloudpulse/backup.sh backup` daily at 03:00 UTC (and at boot if a run was missed while the lab was stopped). It uses SQLite's online backup API, so dpaste keeps serving, and uploads `sqlite/dpaste-<UTC timestamp>.sqlite.gz` to the backup bucket (kept 14 days).
 
@@ -247,7 +247,7 @@ journalctl -u cloudpulse-backup.service -n 20                      # last run
 
 `restore` downloads the backup, refuses it unless `PRAGMA integrity_check` returns `ok`, takes a fresh backup of the current database, stops dpaste, replaces the database file in the `dpaste_data` volume, restarts dpaste and waits for it to be healthy. From your machine: `aws s3 ls s3://$(terraform -chdir=terraform output -raw backup_bucket_name)/sqlite/`.
 
-### Alarms [not yet verified for the 5xx alarm and SNS]
+### Alarms [5xx alarm created and OK; firing and SNS not yet verified]
 
 ```powershell
 aws cloudwatch describe-alarms --alarm-name-prefix cloudpulse --query "MetricAlarms[].[AlarmName,StateValue]" --output table

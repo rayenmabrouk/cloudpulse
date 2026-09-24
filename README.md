@@ -185,7 +185,9 @@ In a different AWS account, pass the state bucket at init time: `terraform init 
 
 **Verified in AWS** (executed and observed, not just configured): CD deploys through SSM; **automatic rollback** after a deliberately broken image (production kept serving 200); data persisted across container replacement; Terraform apply paused for approval and applied the exact plan; `DpasteDown` fired in Prometheus/Grafana when the container stopped and resolved after restart; CloudWatch received container logs.
 
-**Added after that verification and not yet exercised in AWS:** SQLite backups to S3 and restore, the HTTP 5xx metric filter and alarm, SNS notifications, the ECR lifecycle policy, the optional SSH rule, and the updated CI/CD workflows. The runbook marks them `[not yet verified]`.
+**Verified on 2026-09-24 after the hardening changes:** all CI checks green on the pull request (tests, lint, hadolint, image build + container smoke test, Trivy, gitleaks, Terraform checks and plan); CD redeployed after a lab restart moved the instance to a new IP, and the site answered HTTP 200 over HTTPS on the new hostname; the infrastructure changes (tags, ECR lifecycle policy, backup bucket settings, 5xx metric filter and alarm) were applied through the approval gate with no replacement, and the next plan showed no drift; an on-demand SQLite backup uploaded to the encrypted S3 bucket.
+
+**Not yet exercised:** restoring a backup, the 5xx alarm firing, SNS email notifications, the SSH-disabled configuration, and the scheduled (03:00 UTC) backup run. The runbook marks them `[not yet verified]`.
 
 ## Cost considerations
 
