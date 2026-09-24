@@ -1,6 +1,12 @@
-# CloudPulse - one-time bootstrap of the Terraform remote state bucket.
-# Created outside Terraform on purpose: Terraform cannot keep its state in a
-# bucket it has not created yet. Idempotent: safe to re-run.
+# CloudPulse - one-time bootstrap of the S3 buckets Terraform cannot create itself.
+#  1. Terraform remote state bucket: Terraform cannot keep its state in a bucket
+#     it has not created yet.
+#  2. SQLite backup bucket: the AWS Academy service control policy denies
+#     s3:GetBucketObjectLockConfiguration, which the AWS provider needs to manage an
+#     aws_s3_bucket resource. Only the bucket is created here; its versioning,
+#     encryption, lifecycle, TLS-only policy and public access block are managed
+#     by Terraform (terraform/modules/compute/backups.tf).
+# Idempotent: safe to re-run.
 # Run: powershell -ExecutionPolicy Bypass -File scripts\bootstrap-tfstate.ps1
 param([string]$Region = "us-east-1")
 
@@ -50,3 +56,13 @@ Invoke-Aws s3api put-bucket-policy --bucket $bucket --policy "file://$policyFile
 Remove-Item $policyFile
 
 Write-Host "Bucket $bucket ready: versioned, encrypted, public access blocked, TLS-only."
+
+# --- SQLite backup bucket (configuration is applied by Terraform) ---
+$backupBucket = "cloudpulse-backups-$account"
+aws s3api head-bucket --bucket $backupBucket *> $null
+if ($LASTEXITCODE -ne 0) {
+    Invoke-Aws s3api create-bucket --bucket $backupBucket --region $Region | Out-Null
+    Write-Host "Created bucket $backupBucket (run terraform apply to configure it)"
+} else {
+    Write-Host "Bucket $backupBucket already exists"
+}
