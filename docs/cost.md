@@ -1,14 +1,10 @@
 # Cost analysis
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 The project runs in an **AWS Academy Learner Lab** with a **$50 credit budget**. Academy stops the EC2 instance when a lab session ends, so the real spend is far below a 24/7 estimate.
 
-## Actual spend
-
-| Date | Credits used (Vocareum "Used $X of $50") |
-|---|---|
-| 2026-09-23 | _fill in from Vocareum_ |
+Actual spend is shown in Vocareum ("Used $X of $50").
 
 ## What a 24/7 month would cost (estimate)
 
@@ -20,13 +16,16 @@ Estimates use public **us-east-1 on-demand** prices at the time of writing; chec
 | Public IPv4 address | $0.005 / hour x 730 h | 3.65 |
 | EBS gp3, 20 GB | $0.08 / GB-month | 1.60 |
 | EC2 detailed monitoring | 7 metrics x $0.30 | 2.10 |
-| CloudWatch alarms | 2 x $0.10 | 0.20 |
+| CloudWatch alarms | 3 x $0.10 | 0.30 |
+| CloudWatch custom metric (5xx metric filter) | 1 x $0.30 | 0.30 |
 | CloudWatch Logs | < 1 GB ingested, 7-day retention | < 0.50 |
-| ECR storage | < 1 GB x $0.10 | < 0.10 |
+| ECR storage | 10 images kept by the lifecycle policy, ~0.8 GB x $0.10 | < 0.10 |
 | S3 state bucket | a few KB, versioned | ~0 |
+| S3 backup bucket | 14 daily compressed SQLite backups, KB-sized | ~0 |
+| SNS email notifications (optional) | within the free tier (1,000 emails / month) | 0 |
 | SSM Parameter Store | standard parameter | 0 |
 | Data transfer out | a pastebin demo, well under 1 GB | < 0.10 |
-| **Total** | | **~ $15-16** |
+| **Total** | | **~ $16** |
 
 GitHub Actions minutes are free for public repositories. Let's Encrypt certificates and sslip.io DNS are free.
 
