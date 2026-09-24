@@ -20,7 +20,7 @@ output "ecr_repository_url" {
 
 output "backup_bucket_name" {
   description = "S3 bucket holding SQLite backups"
-  value       = aws_s3_bucket.backups.bucket
+  value       = local.backup_bucket
 }
 
 output "secret_key_parameter_name" {

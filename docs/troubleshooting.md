@@ -70,6 +70,16 @@ Every problem below actually happened while building CloudPulse. Each entry give
 ### 14. `docker login` warning: password stored unencrypted in `/root/.docker/config.json`
 - **Fix:** Amazon ECR credential helper; `config.json` now only contains `credHelpers`.
 
+### 16. Terraform pipeline: `Saved plan is stale`
+- **Symptom:** the approved Apply job failed immediately: "The given plan file can no longer be applied because the state was changed by another operation after the plan was created."
+- **Cause:** while the apply was waiting for approval, a local `terraform apply -refresh-only` updated the state (new public IP after a lab restart). The pipeline applies only the exact plan that was reviewed, so it refused a plan built from older state.
+- **Fix:** re-run the workflow (`gh workflow run terraform.yml --ref master`) to get a fresh plan, review it, approve it. Lesson: no local state-changing Terraform commands while a pipeline apply is pending.
+
+### 17. `AccessDenied ... s3:GetBucketObjectLockConfiguration ... explicit deny in a service control policy`
+- **Symptom:** the apply created the backup bucket, then failed reading it back; every later `plan` failed with the same error.
+- **Cause:** the AWS provider reads a bucket's object-lock configuration whenever it manages an `aws_s3_bucket` resource, and the AWS Academy organization SCP denies that call. The state bucket never hit this because it was created with the AWS CLI.
+- **Fix:** removed the bucket resource from state (`terraform state rm module.compute.aws_s3_bucket.backups`, which leaves the bucket in AWS), create the bucket in `scripts/bootstrap-tfstate.ps1`, and keep managing its settings in Terraform (versioning, encryption, lifecycle, policy and public access block resources do not read object lock).
+
 ## Monitoring
 
 ### 15. cAdvisor running but container panels empty
