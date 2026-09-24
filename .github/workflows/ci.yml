@@ -108,7 +108,7 @@ jobs:
           echo "Container user id: $uid"
           if [ "$uid" = "0" ]; then echo "::error::container runs as root"; exit 1; fi
           curl -sSf -o /dev/null -w "GET / -> HTTP %{http_code}\n" http://localhost:8000/
-          curl -sSf -X POST -d "content=ci smoke test&lexer=text" http://localhost:8000/api/
+          curl -sSf -X POST -d "content=ci smoke test&lexer=_text" http://localhost:8000/api/
           echo
           docker rm -f smoke >/dev/null
 
