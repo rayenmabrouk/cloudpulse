@@ -16,12 +16,7 @@ variable "public_subnet_cidr" {
 }
 
 variable "allowed_ssh_cidr" {
-  description = "CIDR block allowed to SSH into EC2"
+  description = "CIDR allowed to SSH into the instance; empty string = no SSH rule"
   type        = string
-}
-
-variable "app_port" {
-  description = "Application port exposed by the container"
-  type        = number
-  default     = 8000
+  default     = ""
 }
