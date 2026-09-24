@@ -1,6 +1,6 @@
 # ============================================================
-# CloudPulse ? Compute Module
-# Creates: ECR repository, EC2 instance with Docker
+# CloudPulse - Compute module
+# Creates: ECR repository (+ lifecycle policy), EC2 instance with Docker
 # ============================================================
 
 # --- Find latest Amazon Linux 2023 AMI ---
@@ -19,9 +19,10 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
-# --- Reference pre-existing Academy LabInstanceProfile ---
+# --- Pre-existing instance profile (AWS Academy: LabInstanceProfile -> LabRole) ---
+# The Learner Lab denies iam:CreateRole, so a least-privilege role cannot be created here.
 data "aws_iam_instance_profile" "lab" {
-  name = "LabInstanceProfile"
+  name = var.instance_profile_name
 }
 
 # --- ECR Repository ---
@@ -40,6 +41,39 @@ resource "aws_ecr_repository" "app" {
   }
 }
 
+# Tags are immutable commit SHAs, so images would pile up forever without this.
+# Keeps the newest N images (enough to roll back several releases) and drops
+# untagged leftovers after a day.
+resource "aws_ecr_lifecycle_policy" "app" {
+  repository = aws_ecr_repository.app.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Expire untagged images after 1 day"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 1
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 2
+        description  = "Keep only the ${var.ecr_images_to_keep} most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = var.ecr_images_to_keep
+        }
+        action = { type = "expire" }
+      }
+    ]
+  })
+}
+
 # --- EC2 Instance ---
 resource "aws_instance" "app" {
   # checkov:skip=CKV_AWS_135:t3 instance types are EBS-optimized by default; the flag does not apply
@@ -51,7 +85,7 @@ resource "aws_instance" "app" {
   key_name               = var.key_name
   monitoring             = true # 1-minute CloudWatch metrics for faster alarms
 
-  # Enforce IMDSv2 ? prevents SSRF token theft
+  # Enforce IMDSv2 - mitigates SSRF-based credential theft
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"

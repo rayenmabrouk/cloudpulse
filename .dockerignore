@@ -14,7 +14,6 @@ venv
 Dockerfile*
 docker-compose*
 .dockerignore
-.travis.yml
 .gitattributes
 docs
 terraform
@@ -22,4 +21,7 @@ monitoring
 scripts
 *.md
 !setup.cfg
-!README.md
+!README.md.hadolint.yaml
+.gitleaksignore
+.trivyignore
+ruff.toml

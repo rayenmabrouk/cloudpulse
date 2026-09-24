@@ -9,3 +9,9 @@ node_modules
 **/__pycache__/
 # Generated monitoring target (changes with the EC2 IP)
 monitoring/prometheus/targets.d/*.yml
+# Local secrets and generated files that must never be committed
+.env
+.env.*
+*.pem
+*.tfplan
+ssm-params.json
