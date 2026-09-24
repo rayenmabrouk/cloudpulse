@@ -1,0 +1,5 @@
+# gitleaks allowlist (fingerprint = commit:file:rule:line)
+# Upstream dpaste commit from 2013: a Coveralls repo token in .coveralls.yml.
+# The file has since been deleted upstream; the token belonged to the original
+# dpaste project's Coveralls account, not to this repository.
+902efaed97a0b5107aaefcf6859e5beb6b9e9a7a:.coveralls.yml:generic-api-key:2

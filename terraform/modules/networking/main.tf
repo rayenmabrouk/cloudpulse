@@ -71,13 +71,17 @@ resource "aws_security_group" "app" {
   description = "Security group for CloudPulse application"
   vpc_id      = aws_vpc.main.id
 
-  # SSH - restricted to your IP only
-  ingress {
-    description = "SSH from allowed IP"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
+  # SSH - break-glass only, from a single CIDR, and only when allowed_ssh_cidr is set.
+  # Normal operations (deploys, shell access) go through SSM, which needs no inbound port.
+  dynamic "ingress" {
+    for_each = var.allowed_ssh_cidr == "" ? [] : [var.allowed_ssh_cidr]
+    content {
+      description = "SSH from allowed IP (break-glass)"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [ingress.value]
+    }
   }
 
   # HTTP - Caddy redirects to HTTPS and answers Let's Encrypt HTTP-01 challenges
