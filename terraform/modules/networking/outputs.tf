@@ -12,3 +12,8 @@ output "app_security_group_id" {
   description = "ID of the application security group"
   value       = aws_security_group.app.id
 }
+
+output "ssh_enabled" {
+  description = "Whether the security group allows SSH"
+  value       = var.allowed_ssh_cidr != ""
+}
