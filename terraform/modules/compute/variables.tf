@@ -3,11 +3,6 @@ variable "project_name" {
   type        = string
 }
 
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-}
-
 variable "subnet_id" {
   description = "Subnet ID for the EC2 instance"
   type        = string
@@ -25,13 +20,25 @@ variable "instance_type" {
 }
 
 variable "key_name" {
-  description = "SSH key pair name"
+  description = "Existing EC2 key pair name (changing it replaces the instance)"
   type        = string
   default     = "vockey"
 }
 
-variable "app_port" {
-  description = "Application port"
+variable "instance_profile_name" {
+  description = "Existing IAM instance profile attached to the instance"
+  type        = string
+  default     = "LabInstanceProfile"
+}
+
+variable "ecr_images_to_keep" {
+  description = "Number of most recent images kept in ECR"
   type        = number
-  default     = 8000
+  default     = 10
+}
+
+variable "backup_retention_days" {
+  description = "Days a SQLite backup object is kept"
+  type        = number
+  default     = 14
 }

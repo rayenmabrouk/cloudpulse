@@ -1,3 +1,13 @@
-aws_region       = "us-east-1"
-project_name     = "cloudpulse"
-allowed_ssh_cidr = "YOUR_PUBLIC_IP/32"
+# Copy to terraform.tfvars (git-ignored) and adjust. Every value has a default,
+# so this file is only needed to change them.
+
+aws_region   = "us-east-1"
+project_name = "cloudpulse"
+
+# Break-glass SSH from a single IP. Leave empty to keep port 22 closed
+# (day-to-day operations use SSM Run Command / Session Manager).
+allowed_ssh_cidr = ""
+# allowed_ssh_cidr = "203.0.113.10/32"
+
+# Receive an email when an alarm fires (confirm the SNS subscription email first).
+alarm_email = ""

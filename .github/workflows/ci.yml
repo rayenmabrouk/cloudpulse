@@ -1,3 +1,14 @@
+# ============================================================
+# CloudPulse - CI
+# Every pull request and push to master:
+#   test               pytest on the same Python version as the runtime image
+#   lint               ruff (blocking)
+#   docker-build-scan  hadolint -> build -> container smoke test -> Trivy
+#   secret-scan        gitleaks over the full Git history
+# test, lint and docker-build-scan are required checks in branch protection:
+# do not rename these job IDs.
+# Third-party actions are pinned to full commit SHAs (Dependabot keeps them current).
+# ============================================================
 name: CI
 
 on:
@@ -6,15 +17,25 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.10"
+          python-version: "3.10" # same as the runtime image (python:3.10-slim)
+          cache: pip
+          cache-dependency-path: setup.cfg
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
@@ -24,43 +45,96 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.10"
 
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.11
 
+      # Rules and the one ignored upstream finding are in ruff.toml
       - name: Run linter
         run: ruff check dpaste/
-        continue-on-error: true
 
   docker-build-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      IMAGE: cloudpulse:ci-${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # Binary download verified against its published SHA-256
+      - name: Lint Dockerfile (hadolint)
+        run: |
+          curl -sSfL -o /tmp/hadolint \
+            https://github.com/hadolint/hadolint/releases/download/v2.14.0/hadolint-linux-x86_64
+          echo "6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47  /tmp/hadolint" | sha256sum -c -
+          chmod +x /tmp/hadolint
+          /tmp/hadolint Dockerfile.hardened
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build hardened image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: Dockerfile.hardened
           push: false
           load: true
-          tags: cloudpulse:ci-${{ github.sha }}
+          tags: ${{ env.IMAGE }}
+
+      # Run the image the way production does: non-root, DEBUG off, health check green,
+      # page served, API accepts a snippet.
+      - name: Container smoke test
+        run: |
+          docker run -d --name smoke -p 8000:8000 \
+            -e SECRET_KEY=ci-smoke-test-only -e DEBUG=False -e ALLOWED_HOSTS=localhost \
+            "$IMAGE"
+          status=starting
+          for _ in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' smoke)
+            if [ "$status" = healthy ] || [ "$status" = unhealthy ]; then break; fi
+            sleep 3
+          done
+          echo "Health status: $status"
+          if [ "$status" != healthy ]; then docker logs smoke; exit 1; fi
+          uid=$(docker exec smoke id -u)
+          echo "Container user id: $uid"
+          if [ "$uid" = "0" ]; then echo "::error::container runs as root"; exit 1; fi
+          curl -sSf -o /dev/null -w "GET / -> HTTP %{http_code}\n" http://localhost:8000/
+          curl -sSf -X POST -d "content=ci smoke test&lexer=_text" http://localhost:8000/api/
+          echo
+          docker rm -f smoke >/dev/null
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: cloudpulse:ci-${{ github.sha }}
+          image-ref: ${{ env.IMAGE }}
           format: table
-          exit-code: 1
+          exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           trivyignores: .trivyignore
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # full history: a secret deleted later is still leaked
+
+      # Accepted historical findings are listed in .gitleaksignore
+      - name: gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks git --no-banner --redact --verbose .
