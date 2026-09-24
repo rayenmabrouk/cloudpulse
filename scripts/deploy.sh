@@ -1,15 +1,15 @@
 #!/bin/bash
-# CloudPulse deploy script - runs ON the EC2 instance
-# (manually over SSH for now, via SSM Run Command from the CD pipeline).
+# CloudPulse deploy script - runs ON the EC2 instance as root
+# (sent by the CD pipeline through SSM Run Command; can also be run by hand).
 #  - Pulls a dpaste image tag from ECR and replaces the running container
 #  - Health-checks it and rolls back to the previous image on failure
 #  - Runs Caddy as the TLS-terminating reverse proxy: automatic HTTPS via
 #    Let's Encrypt on <public-ip-with-dashes>.sslip.io
+#  - Installs daily systemd timers: expired-snippet cleanup and SQLite backup to S3
 # Usage: sudo deploy.sh <image_tag>
 set -euo pipefail
 
 IMAGE_TAG="${1:?usage: deploy.sh <image_tag>}"
-REGION="us-east-1"
 REPO="cloudpulse"
 CONTAINER="dpaste"
 APP_PORT=8000
@@ -30,6 +30,7 @@ IMDS="http://169.254.169.254/latest"
 TOKEN=$(curl -sf -X PUT "${IMDS}/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
 meta() { curl -sf -H "X-aws-ec2-metadata-token: ${TOKEN}" "${IMDS}/$1"; }
 ACCOUNT_ID=$(meta dynamic/instance-identity/document | grep -oP '"accountId"\s*:\s*"\K[0-9]+')
+REGION=$(meta meta-data/placement/region)
 PUBLIC_IP=$(meta meta-data/public-ipv4)
 APP_HOST="${PUBLIC_IP//./-}.sslip.io"
 
@@ -161,13 +162,60 @@ EOF
   log "Cleanup timer active"
 }
 
+# Daily online SQLite backup to S3 (scripts/backup.sh, shipped next to this script
+# by the CD pipeline). Non-fatal: a backup problem must not fail a healthy deploy.
+ensure_backup_timer() {
+  if [ ! -x "${STATE_DIR}/backup.sh" ]; then
+    log "WARNING: ${STATE_DIR}/backup.sh missing - backup timer not installed"
+    return 0
+  fi
+  cat > /etc/systemd/system/cloudpulse-backup.service <<EOF
+[Unit]
+Description=CloudPulse - back up the dpaste SQLite database to S3
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=${STATE_DIR}/backup.sh backup
+EOF
+  cat > /etc/systemd/system/cloudpulse-backup.timer <<EOF
+[Unit]
+Description=Run CloudPulse SQLite backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  if systemctl enable --now cloudpulse-backup.timer >/dev/null 2>&1; then
+    log "Backup timer active"
+  else
+    log "WARNING: could not enable backup timer"
+  fi
+}
+
+# Remove older release images from the instance disk; keep the running image and
+# the previous one (the rollback target). ECR keeps the full history.
+prune_old_images() {
+  docker images "${REGISTRY}/${REPO}" --format '{{.Repository}}:{{.Tag}}' \
+    | grep -vxF -e "${IMAGE}" -e "${PREVIOUS_IMAGE:-none}" \
+    | xargs -r docker rmi >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null
+}
+
 start_container "${IMAGE}"
 if healthy; then
   log "Healthy: ${IMAGE}"
   echo "${IMAGE}" > "${STATE_DIR}/current_image"
   ensure_proxy
   ensure_cleanup_timer
-  docker image prune -f >/dev/null
+  ensure_backup_timer
+  prune_old_images
   log "Live at https://${APP_HOST}"
   exit 0
 fi
