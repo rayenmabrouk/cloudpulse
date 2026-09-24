@@ -5,7 +5,8 @@
 # ============================================================
 
 # Stage 1: Build static files (CSS/JS) with Node
-FROM node:lts-slim AS staticfiles
+# Major version pinned: a floating "lts" tag would silently jump to the next LTS.
+FROM node:24-slim AS staticfiles
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends make && rm -rf /var/lib/apt/lists/*
@@ -32,7 +33,7 @@ COPY --from=staticfiles /app /app/
 # Install Python dependencies
 COPY setup.py setup.cfg ./
 COPY dpaste/__init__.py dpaste/
-RUN pip install --no-cache-dir -e .[production]
+RUN pip install --no-cache-dir -e ".[production]"
 
 # Copy application code
 COPY . .
@@ -45,6 +46,11 @@ RUN rm -rf node_modules
 
 # Stage 3: Production runtime
 FROM python:3.10-slim AS runtime
+
+LABEL org.opencontainers.image.title="cloudpulse-dpaste" \
+      org.opencontainers.image.description="dpaste (MIT, DarrenOfficial/dpaste) in a hardened runtime image" \
+      org.opencontainers.image.source="https://github.com/rayenmabrouk/cloudpulse" \
+      org.opencontainers.image.licenses="MIT"
 
 # Install runtime dependencies and curl for health check
 RUN apt-get update && \
@@ -64,8 +70,10 @@ COPY --from=build /app /app
 # Create directory for SQLite database and set permissions
 RUN mkdir -p /data && chown -R dpaste:dpaste /app /data
 
-ENV PORT=8000
-ENV DATABASE_URL=sqlite:////data/dpaste.sqlite
+ENV PORT=8000 \
+    DATABASE_URL=sqlite:////data/dpaste.sqlite \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Switch to non-root user
 USER dpaste
@@ -74,7 +82,7 @@ EXPOSE ${PORT}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/ || exit 1
+    CMD ["sh", "-c", "curl -fsS -o /dev/null http://localhost:${PORT}/ || exit 1"]
 
 # Use exec form for proper signal handling
 CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py pyuwsgi --http=:${PORT} --logger file:/dev/null"]

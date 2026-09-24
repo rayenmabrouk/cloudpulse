@@ -2,7 +2,9 @@
 # CloudPulse - CD pipeline
 # Build -> Trivy gate -> push to ECR -> deploy to EC2 via SSM Run Command
 # -> HTTPS smoke test. Runs on merges to master that change the app,
-# the image or the deploy script; can also be started manually.
+# the image or the on-instance scripts; can also be started manually.
+# AWS credentials are only configured after the image has passed the scan,
+# so the build and third-party scanner never run with cloud access.
 # ============================================================
 name: CD
 
@@ -18,6 +20,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "scripts/deploy.sh"
+      - "scripts/backup.sh"
       - ".github/workflows/cd.yml"
   workflow_dispatch:
 
@@ -38,19 +41,46 @@ jobs:
   build-scan-push:
     name: Build, scan, push
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Image tag = short commit SHA
         id: meta
         run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # provenance/sbom off: an attestation turns the push into an image index,
+      # which ECR basic scanning cannot scan
+      - name: Build image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile.hardened
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+
+      # Same policy as CI: fail on fixable CRITICAL/HIGH. Nothing is pushed if this fails.
+      - name: Trivy scan (release gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
       # AWS Academy session credentials (OIDC is blocked in the Learner Lab).
       # They expire with the lab session; refreshed by scripts/refresh-github-aws-secrets.ps1
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -59,54 +89,34 @@ jobs:
 
       - name: Log in to Amazon ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.hardened
-          load: true
-          push: false
-          provenance: false
-          sbom: false
-          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
-
-      # Same policy as CI: fail on fixable CRITICAL/HIGH. Nothing is pushed if this fails.
-      - name: Trivy scan (release gate)
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
-          format: table
-          exit-code: "1"
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          trivyignores: .trivyignore
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       # ECR tags are immutable: a re-run for the same commit must not fail on push
       - name: Push image to ECR
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          TAG="${{ steps.meta.outputs.tag }}"
           if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists in ECR (immutable) - skipping push"
           else
-            docker push "${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:$TAG"
+            docker tag "$ECR_REPOSITORY:$TAG" "$REGISTRY/$ECR_REPOSITORY:$TAG"
+            docker push "$REGISTRY/$ECR_REPOSITORY:$TAG"
           fi
 
   deploy:
     name: Deploy to EC2 via SSM
     needs: build-scan-push
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: production
       url: ${{ steps.deploy.outputs.app_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -129,13 +139,17 @@ jobs:
             --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
           echo "Deploying tag ${IMAGE_TAG} to ${INSTANCE_ID} (${PUBLIC_IP})"
 
-          # Ship this commit's deploy.sh with the command, so the instance
-          # always runs the reviewed version from Git.
-          SCRIPT_B64=$(base64 -w0 scripts/deploy.sh)
-          jq -n --arg b64 "$SCRIPT_B64" --arg tag "$IMAGE_TAG" '{commands: [
+          # Ship this commit's deploy.sh and backup.sh with the command, so the
+          # instance always runs the reviewed versions from Git (gzip keeps the
+          # SSM parameter small).
+          DEPLOY_B64=$(gzip -9c scripts/deploy.sh | base64 -w0)
+          BACKUP_B64=$(gzip -9c scripts/backup.sh | base64 -w0)
+          jq -n --arg deploy "$DEPLOY_B64" --arg backup "$BACKUP_B64" --arg tag "$IMAGE_TAG" '{commands: [
             "set -e",
-            "echo \($b64) | base64 -d > /opt/cloudpulse/deploy.sh",
-            "chmod 0755 /opt/cloudpulse/deploy.sh",
+            "mkdir -p /opt/cloudpulse",
+            "echo \($deploy) | base64 -d | gunzip > /opt/cloudpulse/deploy.sh",
+            "echo \($backup) | base64 -d | gunzip > /opt/cloudpulse/backup.sh",
+            "chmod 0755 /opt/cloudpulse/deploy.sh /opt/cloudpulse/backup.sh",
             "/opt/cloudpulse/deploy.sh \($tag)"
           ]}' > ssm-params.json
 
