@@ -244,9 +244,6 @@ To stop all charges: `terraform -chdir=terraform destroy` (ECR images are force-
 - **Black-box monitoring.** Prometheus probes the public URL (availability, latency, TLS expiry) without changing the application; CloudWatch covers the AWS side.
 - **Backups to S3 from the instance instead of EBS snapshot policies.** Data Lifecycle Manager needs its own IAM role, which the lab forbids; the SQLite online-backup API gives a consistent copy without stopping the app.
 
-## How this was built
-
-
 ## Evidence
 
 Screenshots are in [`docs/screenshots/`](docs/screenshots/).
